@@ -1,0 +1,197 @@
+// Prisma Schema for Military Asset Management System
+// 9 Models: Base, User, EquipmentType, Asset, Purchase, Transfer, Assignment, Expenditure, AuditLog
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  BASE_COMMANDER
+  LOGISTICS_OFFICER
+}
+
+enum Category {
+  WEAPON
+  VEHICLE
+  AMMUNITION
+}
+
+enum TransferStatus {
+  PENDING
+  IN_TRANSIT
+  COMPLETED
+}
+
+enum AuditAction {
+  PURCHASE
+  TRANSFER
+  ASSIGNMENT
+  EXPENDITURE
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model Base {
+  id       Int    @id @default(autoincrement())
+  name     String @db.VarChar(100)
+  location String @db.VarChar(150)
+
+  // Relations
+  users              User[]
+  purchases          Purchase[]
+  assignmentsAtBase  Assignment[]
+  expendituresAtBase Expenditure[]
+  assets             Asset[]
+  transfersOut       Transfer[]    @relation("SourceBase")
+  transfersIn        Transfer[]    @relation("DestinationBase")
+
+  @@map("bases")
+}
+
+model User {
+  id           Int    @id @default(autoincrement())
+  username     String @unique @db.VarChar(50)
+  passwordHash String @db.VarChar(255)
+  role         Role
+
+  // A user may be assigned to a specific base (null for ADMIN with global access)
+  baseId Int?
+  base   Base? @relation(fields: [baseId], references: [id], onDelete: SetNull)
+
+  // Relations
+  transfers Transfer[]
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+model EquipmentType {
+  id       Int      @id @default(autoincrement())
+  name     String   @db.VarChar(100)
+  category Category
+
+  // Relations
+  purchases    Purchase[]
+  transfers    Transfer[]
+  assignments  Assignment[]
+  expenditures Expenditure[]
+  assets       Asset[]
+
+  @@map("equipment_types")
+}
+
+/// Current inventory state per base and equipment type.
+/// Updated transactionally alongside every mutation.
+model Asset {
+  id              Int           @id @default(autoincrement())
+  baseId          Int
+  equipmentTypeId Int
+  quantity        Int           @default(0)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  base          Base          @relation(fields: [baseId], references: [id], onDelete: Restrict)
+  equipmentType EquipmentType @relation(fields: [equipmentTypeId], references: [id], onDelete: Restrict)
+
+  // One asset record per base-equipment combination
+  @@unique([baseId, equipmentTypeId])
+  @@index([baseId])
+  @@index([equipmentTypeId])
+  @@map("assets")
+}
+
+model Purchase {
+  id              Int      @id @default(autoincrement())
+  quantity        Int
+  date            DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  // Relations
+  baseId          Int
+  base            Base          @relation(fields: [baseId], references: [id], onDelete: Restrict)
+  equipmentTypeId Int
+  equipmentType   EquipmentType @relation(fields: [equipmentTypeId], references: [id], onDelete: Restrict)
+
+  @@index([baseId, equipmentTypeId, date])
+  @@map("purchases")
+}
+
+model Transfer {
+  id              Int            @id @default(autoincrement())
+  quantity        Int
+  status          TransferStatus @default(COMPLETED)
+  timestamp       DateTime       @default(now())
+  createdAt       DateTime       @default(now())
+
+  // Relations
+  sourceBaseId      Int
+  sourceBase        Base          @relation("SourceBase", fields: [sourceBaseId], references: [id], onDelete: Restrict)
+  destinationBaseId Int
+  destinationBase   Base          @relation("DestinationBase", fields: [destinationBaseId], references: [id], onDelete: Restrict)
+  equipmentTypeId   Int
+  equipmentType     EquipmentType @relation(fields: [equipmentTypeId], references: [id], onDelete: Restrict)
+  initiatedBy       Int
+  initiator         User          @relation(fields: [initiatedBy], references: [id], onDelete: Restrict)
+
+  @@index([sourceBaseId, equipmentTypeId, timestamp])
+  @@index([destinationBaseId, equipmentTypeId, timestamp])
+  @@map("transfers")
+}
+
+model Assignment {
+  id              Int      @id @default(autoincrement())
+  quantity        Int
+  assignedTo      String   @db.VarChar(100)
+  date            DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  // Relations
+  baseId          Int
+  base            Base          @relation(fields: [baseId], references: [id], onDelete: Restrict)
+  equipmentTypeId Int
+  equipmentType   EquipmentType @relation(fields: [equipmentTypeId], references: [id], onDelete: Restrict)
+
+  @@index([baseId, equipmentTypeId, date])
+  @@map("assignments")
+}
+
+model Expenditure {
+  id              Int      @id @default(autoincrement())
+  quantity        Int
+  description     String   @db.Text
+  date            DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  // Relations
+  baseId          Int
+  base            Base          @relation(fields: [baseId], references: [id], onDelete: Restrict)
+  equipmentTypeId Int
+  equipmentType   EquipmentType @relation(fields: [equipmentTypeId], references: [id], onDelete: Restrict)
+
+  @@index([baseId, equipmentTypeId, date])
+  @@map("expenditures")
+}
+
+model AuditLog {
+  id        Int         @id @default(autoincrement())
+  action    AuditAction
+  details   String      @db.Text
+  createdAt DateTime    @default(now())
+
+  // Relations
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([createdAt])
+  @@index([userId])
+  @@map("audit_logs")
+}
